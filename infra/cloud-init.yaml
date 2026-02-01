@@ -1,0 +1,109 @@
+#cloud-config
+# Server Provisioning Configuration
+#
+# Usage: Paste this into your cloud provider's "User Data" or "Cloud-Init" field
+#        when creating a new server.
+#
+# Tested on: Ubuntu 22.04, Ubuntu 24.04, Debian 12
+#
+# After boot completes (~2-3 min), SSH in and run:
+#   cd /opt/project/infra
+#   cp .env.example .env
+#   nano .env  # fill in your values
+#   make up
+
+# Upgrade packages on first boot
+package_update: true
+package_upgrade: true
+
+# Install required packages
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - ufw
+  - fail2ban
+  - git
+  - make
+  - unattended-upgrades
+
+# Disable password authentication
+ssh_pwauth: false
+
+# Create deploy user
+users:
+  - name: deploy
+    groups: sudo
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ssh-ed25519 YOUR_PUBLIC_KEY_HERE
+
+# Write files
+write_files:
+  # fail2ban config
+  - path: /etc/fail2ban/jail.local
+    content: |
+      [DEFAULT]
+      bantime = 1h
+      findtime = 10m
+      maxretry = 5
+
+      [sshd]
+      enabled = true
+      port = ssh
+      filter = sshd
+      logpath = /var/log/auth.log
+      maxretry = 3
+
+  # Docker daemon config
+  - path: /etc/docker/daemon.json
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+
+# Run commands
+runcmd:
+  # Install Docker
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+  # Add deploy user to docker group
+  - usermod -aG docker deploy
+
+  # Configure firewall
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+
+  # Enable services
+  - systemctl enable fail2ban
+  - systemctl start fail2ban
+  - systemctl enable docker
+  - systemctl start docker
+
+  # Create app directory
+  - mkdir -p /opt/project
+  - chown deploy:deploy /opt/project
+
+  # Signal completion
+  - echo "Cloud-init completed at $(date)" >> /var/log/cloud-init-complete.log
+
+# Reboot after setup (ensures all changes take effect)
+power_state:
+  mode: reboot
+  message: "Rebooting after cloud-init setup"
+  timeout: 30
+  condition: true

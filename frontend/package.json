@@ -1,0 +1,11 @@
+{
+  "name": "frontend",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "echo 'Configure your frontend framework first (e.g., npm create vite@latest)'",
+    "build": "echo 'No build configured - see README.md' && mkdir -p dist && cp -n dist/index.html dist/index.html 2>/dev/null || true",
+    "lint": "echo 'No lint configured - add eslint when you set up your framework'"
+  },
+  "devDependencies": {}
+}

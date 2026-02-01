@@ -1,0 +1,77 @@
+# Production Docker Compose
+# Usage: docker compose up -d
+#
+# Required: Copy .env.example to .env and fill in values
+
+services:
+  # =============================================================================
+  # Database
+  # =============================================================================
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: ${DB_NAME:-app}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-app} -d ${DB_NAME:-app}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =============================================================================
+  # Application
+  # =============================================================================
+
+  api:
+    image: ghcr.io/${GITHUB_REPOSITORY:-project}/server:${VERSION:-latest}
+    build:
+      context: ../backend
+      dockerfile: ../infra/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+        VERSION: ${VERSION:-dev}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - PORT=8080
+      - DATABASE_URL=postgres://${DB_USER:-app}:${DB_PASSWORD}@db:5432/${DB_NAME:-app}?sslmode=disable
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - JWT_EXPIRY_HOURS=${JWT_EXPIRY_HOURS:-24}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+    expose:
+      - "8080"
+
+  # =============================================================================
+  # Reverse Proxy
+  # =============================================================================
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../frontend/dist:/srv/frontend:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - DOMAIN=${DOMAIN:?DOMAIN is required}
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:

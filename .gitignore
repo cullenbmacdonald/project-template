@@ -1,0 +1,47 @@
+# Build artifacts
+/dist/
+/bin/
+*.exe
+
+# Dependencies
+node_modules/
+vendor/
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Environment
+.env
+.env.local
+*.env
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+coverage.out
+.coverage
+htmlcov/
+
+# Build caches
+.cache/
+.npm/
+.pytest_cache/
+.mypy_cache/
+
+# Infrastructure
+infra/backups/
+infra/downloads/
+
+# Temporary
+tmp/
+temp/

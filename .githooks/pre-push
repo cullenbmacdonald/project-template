@@ -1,0 +1,81 @@
+#!/bin/sh
+# Pre-push hook: runs tests and build for changed directories
+# Only runs checks for code that was touched in the push
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Get the remote and URL from stdin (provided by git)
+read local_ref local_sha remote_ref remote_sha
+
+# Determine what files are being pushed
+# If remote_sha is all zeros, this is a new branch - compare against main
+if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    # New branch - compare against main/master
+    BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+    CHANGED_FILES=$(git diff --name-only "origin/$BASE_BRANCH"..."$local_sha" 2>/dev/null || git diff --name-only "$local_sha")
+else
+    # Existing branch - compare against remote
+    CHANGED_FILES=$(git diff --name-only "$remote_sha"..."$local_sha")
+fi
+
+# Check which directories have changes
+# Customize these patterns for your project structure
+BACKEND_CHANGED=$(echo "$CHANGED_FILES" | grep -E '^backend/' || true)
+FRONTEND_CHANGED=$(echo "$CHANGED_FILES" | grep -E '^frontend/' || true)
+
+if [ -z "$BACKEND_CHANGED" ] && [ -z "$FRONTEND_CHANGED" ]; then
+    echo "No backend or frontend files in push. Skipping checks."
+    exit 0
+fi
+
+echo "Running pre-push checks..."
+
+# Backend tests and build (only if backend files changed)
+if [ -n "$BACKEND_CHANGED" ]; then
+    echo ""
+    echo "=== Backend Tests ==="
+    cd "$REPO_ROOT/backend"
+
+    echo "Running tests..."
+    make test
+    if [ $? -ne 0 ]; then
+        echo "Tests failed. Please fix the issues before pushing."
+        exit 1
+    fi
+
+    echo ""
+    echo "=== Backend Build ==="
+    echo "Building..."
+    make build
+    if [ $? -ne 0 ]; then
+        echo "Backend build failed. Please fix the issues before pushing."
+        exit 1
+    fi
+else
+    echo ""
+    echo "=== Backend ==="
+    echo "No backend files changed. Skipping."
+fi
+
+# Frontend build (only if frontend files changed)
+if [ -n "$FRONTEND_CHANGED" ]; then
+    echo ""
+    echo "=== Frontend Build ==="
+    cd "$REPO_ROOT/frontend"
+
+    echo "Building frontend..."
+    make build
+    if [ $? -ne 0 ]; then
+        echo "Frontend build failed. Please fix the issues before pushing."
+        exit 1
+    fi
+else
+    echo ""
+    echo "=== Frontend ==="
+    echo "No frontend files changed. Skipping."
+fi
+
+echo ""
+echo "Pre-push checks passed."
