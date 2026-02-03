@@ -146,8 +146,90 @@ log "Copying core files..."
 cp -r "$TEMPLATES_DIR/core/.githooks" .
 cp "$TEMPLATES_DIR/core/.gitignore" .
 cp "$TEMPLATES_DIR/core/.editorconfig" .
-cp "$TEMPLATES_DIR/core/CLAUDE.md.tmpl" CLAUDE.md
-substitute CLAUDE.md
+
+# Generate CLAUDE.md based on selected components
+generate_claude_md() {
+    cat > CLAUDE.md << CLAUDE_HEADER
+# CLAUDE.md
+
+This file provides guidance to Claude Code when working with this codebase.
+
+## Project: $PROJECT_NAME
+
+## Project Structure
+
+\`\`\`
+$PROJECT_NAME/
+├── Makefile               # Root coordinator
+├── .githooks/             # Git hooks (auto-configured)
+CLAUDE_HEADER
+
+    if [[ "$BACKEND_LANG" != "none" ]]; then
+        cat >> CLAUDE.md << CLAUDE_BACKEND
+├── backend/               # Backend ($BACKEND_LANG)
+│   └── Makefile
+CLAUDE_BACKEND
+    fi
+
+    if [[ "$HAS_FRONTEND" == "yes" ]]; then
+        cat >> CLAUDE.md << CLAUDE_FRONTEND
+├── frontend/              # Frontend (npm)
+│   └── Makefile
+CLAUDE_FRONTEND
+    fi
+
+    if [[ "$BACKEND_LANG" != "none" ]]; then
+        cat >> CLAUDE.md << CLAUDE_INFRA
+└── infra/                 # Deployment infrastructure
+    ├── docker-compose.yml
+    ├── Caddyfile
+    └── deploy.sh
+CLAUDE_INFRA
+    fi
+
+    cat >> CLAUDE.md << 'CLAUDE_COMMANDS'
+```
+
+## Common Commands
+
+```bash
+make lint      # Lint all components
+make test      # Test all components
+make build     # Build all components
+make clean     # Clean all artifacts
+make help      # Show all targets
+```
+
+CLAUDE_COMMANDS
+
+    if [[ "$BACKEND_LANG" != "none" ]]; then
+        cat >> CLAUDE.md << 'CLAUDE_DEPLOY'
+## Deployment
+
+```bash
+make deploy DEPLOY_HOST=user@host    # Deploy to server
+./infra/deploy.sh user@host --init   # First-time setup
+```
+
+CLAUDE_DEPLOY
+    fi
+
+    cat >> CLAUDE.md << 'CLAUDE_HOOKS'
+## Git Hooks
+
+Hooks run automatically:
+- **Pre-commit**: Formats code and runs linters on staged files
+- **Pre-push**: Runs tests and builds on changed directories
+
+## Code Style
+
+- Code must pass `make lint` before committing
+- Tests must pass before pushing
+- Hooks enforce this automatically
+CLAUDE_HOOKS
+}
+
+generate_claude_md
 
 # Generate .githooks based on components
 log "Configuring git hooks..."
