@@ -1,0 +1,45 @@
+# Caddyfile
+
+www.{$DOMAIN} {
+    redir https://{$DOMAIN}{uri} permanent
+}
+
+{$DOMAIN} {
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    handle /health {
+        reverse_proxy api:8080
+    }
+
+    # Frontend SPA
+    handle {
+        root * /srv/frontend
+
+        @html {
+            path /index.html /
+        }
+        header @html Cache-Control "no-cache, no-store, must-revalidate"
+
+        @assets {
+            path /assets/*
+        }
+        header @assets Cache-Control "public, max-age=31536000, immutable"
+
+        try_files {path} /index.html
+        file_server
+    }
+
+    log {
+        output stdout
+        format json
+    }
+
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+}

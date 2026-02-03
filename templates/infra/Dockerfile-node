@@ -1,0 +1,35 @@
+# Node.js Dockerfile
+
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --production
+
+COPY --from=builder /app/dist ./dist
+
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+ARG VERSION=dev
+
+ENV VERSION=${VERSION}
+ENV COMMIT_HASH=${GIT_COMMIT}
+ENV BUILD_TIME=${BUILD_TIME}
+
+RUN adduser -D -u 1000 app
+USER app
+
+EXPOSE 8080
+
+CMD ["node", "dist/index.js"]

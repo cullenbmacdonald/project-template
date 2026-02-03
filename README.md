@@ -1,141 +1,115 @@
 # Project Template
 
-A flexible project template with automated quality checks, CI/CD, and deployment infrastructure.
-
-## Key Features
-
-- **Automatic git hooks** - Pre-commit and pre-push hooks run checks without manual setup
-- **Unified Makefile interface** - Same targets (`lint`, `test`, `build`) across all components
-- **Smart CI** - GitHub Actions only run on changed directories
-- **Production-ready infra** - Docker Compose, Caddy reverse proxy, cloud-init provisioning
+An interactive project template with automated git hooks, CI/CD, and deployment infrastructure.
 
 ## Quick Start
 
 ```bash
-# Clone and rename
-git clone <this-repo> my-project
-cd my-project
+# Clone the template
+git clone https://github.com/cullenbmacdonald/project-template.git
+cd project-template
 
-# First build automatically configures git hooks
-make build
+# Create a new project
+./create-project.sh my-project
 
-# Now pre-commit/pre-push hooks are active
-git commit -m "My change"  # Runs lint on staged files
-git push                   # Runs tests and build on changed files
+# Follow the prompts to choose:
+#   - Backend language (Go, Python, Node.js, or none)
+#   - Whether to include a frontend
+#   - GitHub org/username (optional)
+#   - Production domain (optional)
 ```
 
-## Structure
+## What Gets Generated
 
 ```
-project/
-├── Makefile               # Root coordinator - standard targets
-├── .githooks/             # Git hooks (auto-configured)
-│   ├── pre-commit         # Lint/format on commit
-│   ├── pre-push           # Test/build on push
-│   └── ensure-hooks.sh    # Auto-setup script
-├── .github/workflows/     # GitHub Actions CI
-│   ├── backend.yml        # Backend-specific checks
-│   └── frontend.yml       # Frontend-specific checks
-├── backend/               # Backend code
-│   └── Makefile           # Backend-specific targets
-├── frontend/              # Frontend code
-│   └── Makefile           # Frontend-specific targets
-└── infra/                 # Deployment infrastructure
-    ├── Makefile           # Server-side operations
-    ├── docker-compose.yml # Production services
-    ├── Caddyfile          # Reverse proxy config
-    ├── Dockerfile         # Backend container
-    ├── cloud-init.yaml    # Server provisioning
-    ├── deploy.sh          # Deployment script
-    └── .env.example       # Environment template
+my-project/
+├── Makefile               # Root coordinator
+├── .githooks/             # Pre-commit and pre-push hooks
+├── .github/workflows/     # CI pipelines (path-filtered)
+├── backend/               # If backend selected
+│   ├── Makefile
+│   └── ...                # Language-specific files
+├── frontend/              # If frontend selected
+│   ├── Makefile
+│   └── package.json
+└── infra/                 # If backend selected
+    ├── Makefile
+    ├── docker-compose.yml
+    ├── Dockerfile
+    ├── Caddyfile
+    ├── deploy.sh
+    └── cloud-init.yaml
 ```
 
-## Makefile Targets
+## Features
 
-Run from the repo root:
+### Automatic Git Hooks
+
+Hooks are configured automatically on project creation:
+
+- **Pre-commit**: Runs formatters and linters on staged files
+- **Pre-push**: Runs tests and builds on changed directories
+
+Only the directories with actual changes are checked.
+
+### Path-Filtered CI
+
+GitHub Actions only run when relevant files change:
+
+- `backend.yml` - Triggers on `backend/**` changes
+- `frontend.yml` - Triggers on `frontend/**` changes
+
+### Unified Makefile Interface
+
+Same targets work everywhere:
 
 ```bash
-# Aggregate (all components)
-make lint      # Lint backend + frontend
-make test      # Test backend + frontend
-make build     # Build backend + frontend
-make clean     # Clean all artifacts
-make install   # Install dependencies
-
-# Component-specific
-make lint-backend
-make build-frontend
-
-# Deployment
-make deploy DEPLOY_HOST=user@host
-
-# Help
-make help
+make lint      # Lint all components
+make test      # Test all components
+make build     # Build all components
+make deploy    # Deploy to server
 ```
 
-## Customization
+### Production Infrastructure
 
-### Adding a New Component
+The `infra/` directory includes:
 
-1. Create a directory with a Makefile that has: `lint`, `test`, `build`, `clean`, `install`, `help`
-2. Add targets to root Makefile
-3. Add path filter to `.githooks/pre-commit` and `.githooks/pre-push`
-4. Create `.github/workflows/<component>.yml`
+- Docker Compose for PostgreSQL + API + Caddy
+- Automatic TLS via Let's Encrypt
+- Cloud-init for server provisioning
+- Deploy script with rsync
 
-### Changing Tech Stack
+## Backend Options
 
-The hooks and Makefiles are tech-agnostic shells:
-- Backend: Replace Go commands with Python/Node/Rust equivalents
-- Frontend: Already uses npm wrapper pattern
+| Language | Framework | Linter |
+|----------|-----------|--------|
+| Go | stdlib | golangci-lint |
+| Python | FastAPI | ruff |
+| Node.js | Express + TypeScript | ESLint |
 
-### Single-Component Projects
+## Frontend
 
-For simple projects without separate backend/frontend:
-- Delete unused directories
-- Simplify root Makefile to call the single component directly
-- Update hooks to check only that directory
+The frontend is a placeholder - set up your preferred framework:
 
-## Git Hooks
-
-Hooks are automatically configured on first `make build`, `make test`, or `make lint`.
-
-### Pre-commit (runs on `git commit`)
-- Detects which directories have staged changes
-- Runs formatters and linters on changed directories
-- Auto-adds formatting changes to the commit
-- Blocks commit if lint fails
-
-### Pre-push (runs on `git push`)
-- Compares local branch to remote
-- Runs tests and builds only for changed directories
-- Blocks push if tests/build fail
-
-### Manual Setup (if needed)
 ```bash
-git config core.hooksPath .githooks
+cd my-project/frontend
+npm create vite@latest . -- --template react-ts
 ```
-
-## CI/CD
-
-GitHub Actions run on push/PR to main, filtered by path:
-- `backend.yml` - Only runs when `backend/**` changes
-- `frontend.yml` - Only runs when `frontend/**` changes
-
-Each workflow runs lint, test, and build in parallel jobs.
 
 ## Deployment
 
-### Initial Server Setup
+### First-time Setup
 
-1. Create server with `infra/cloud-init.yaml` as user data
+1. Provision a server with `infra/cloud-init.yaml`
 2. Deploy with init flag:
    ```bash
    ./infra/deploy.sh user@host --init
    ```
-3. SSH in and configure `.env`
-4. Start services:
+3. SSH in and configure `.env`:
    ```bash
-   cd /opt/project/infra && make up
+   ssh user@host
+   nano /opt/project/infra/.env  # Set DOMAIN
+   make up
    ```
 
 ### Regular Deployment
@@ -144,19 +118,20 @@ Each workflow runs lint, test, and build in parallel jobs.
 make deploy DEPLOY_HOST=user@host
 ```
 
-The deploy script:
-- Detects which components changed since last deploy
-- Only rebuilds changed components
-- Updates only what's necessary
+## Template Structure
 
-## Environment Variables
-
-See `infra/.env.example` for all configuration options.
-
-Required variables:
-- `DOMAIN` - Your domain for TLS certificates
-- `DB_PASSWORD` - Database password
-- `JWT_SECRET` - Authentication secret
+```
+project-template/
+├── create-project.sh      # Interactive setup script
+├── README.md
+└── templates/
+    ├── core/              # Always copied
+    ├── backend-go/
+    ├── backend-python/
+    ├── backend-node/
+    ├── frontend/
+    └── infra/
+```
 
 ## License
 
