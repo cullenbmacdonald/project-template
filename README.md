@@ -1,3 +1,5 @@
+# HELLO
+
 # Project Template
 
 An interactive project template with automated git hooks, CI/CD, and deployment infrastructure.
