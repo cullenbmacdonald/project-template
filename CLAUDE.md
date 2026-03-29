@@ -12,15 +12,28 @@ This is a **project template generator**, not a project itself. It contains:
 
 ```
 project-template/
-├── create-project.sh      # Main generator script
+├── create-project.sh              # Main generator script
 ├── README.md
 └── templates/
-    ├── core/              # Always copied (.githooks, .gitignore, .editorconfig)
-    ├── backend-go/        # Go backend template
-    ├── backend-python/    # Python backend template
-    ├── backend-node/      # Node.js backend template
-    ├── frontend/          # Frontend template (npm placeholder)
-    └── infra/             # Infrastructure (Dockerfiles, Caddyfile, deploy.sh)
+    ├── core/                      # Always copied (.githooks, .gitignore, .editorconfig)
+    ├── backend-go/                # Go backend template
+    ├── backend-python/            # Python backend template
+    ├── backend-node/              # Node.js backend template
+    ├── frontend/                  # Frontend template (npm placeholder)
+    ├── infra/                     # Infrastructure (Dockerfiles, Caddyfile, deploy.sh)
+    ├── scripts/                   # Dev environment scripts
+    │   └── port-allocator.py      # Deterministic port allocation per branch
+    ├── docker-compose.dev.yml.tmpl # Dev Docker Compose (database)
+    ├── docs/todos/                # TODO tracking structure
+    │   ├── README.md              # TODO index template
+    │   └── TEMPLATE.md            # TODO file template
+    └── claude/skills/             # Claude TODO management skills
+        ├── todo-list/             # /todo:list
+        ├── todo-start/            # /todo:start
+        ├── todo-status/           # /todo:status
+        ├── todo-review/           # /todo:review
+        ├── todo-pr/               # /todo:pr
+        └── todo-merge/            # /todo:merge
 ```
 
 ## How the Generator Works
@@ -30,8 +43,10 @@ project-template/
 3. Script creates new directory and:
    - Copies relevant templates based on selections
    - Generates `.githooks/pre-commit` and `pre-push` dynamically
-   - Generates root `Makefile` dynamically
+   - Generates `scripts/env.sh`, `scripts/dev.sh`, `scripts/teardown.sh` dynamically
+   - Generates root `Makefile` dynamically (with `dev` and `teardown` targets)
    - Generates `CLAUDE.md` dynamically
+   - Copies `docker-compose.dev.yml` (if backend), `.claude/skills/`, `docs/todos/`
    - Substitutes `{{VARIABLES}}` in `.tmpl` files
    - Initializes git repo with hooks configured
 
