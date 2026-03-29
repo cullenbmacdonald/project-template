@@ -46,7 +46,7 @@ build: ensure-hooks ## Verify the app can start
 	$(PYTHON) -c "import src.main"
 
 run: ## Run the server
-	$(PYTHON) -m uvicorn src.main:app --reload --port 8080
+	$(PYTHON) -m uvicorn src.main:app --reload --port $${PORT:-8080}
 
 clean: ## Remove build artifacts
 	rm -rf $(VENV)

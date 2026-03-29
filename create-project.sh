@@ -180,12 +180,24 @@ CLAUDE_FRONTEND
 
     if [[ "$BACKEND_LANG" != "none" ]]; then
         cat >> CLAUDE.md << CLAUDE_INFRA
-└── infra/                 # Deployment infrastructure
-    ├── docker-compose.yml
-    ├── Caddyfile
-    └── deploy.sh
+├── infra/                 # Deployment infrastructure
+│   ├── docker-compose.yml
+│   ├── Caddyfile
+│   └── deploy.sh
 CLAUDE_INFRA
     fi
+
+    cat >> CLAUDE.md << 'CLAUDE_SCRIPTS'
+├── scripts/               # Dev environment scripts
+│   ├── port-allocator.py  # Deterministic port allocation
+│   ├── env.sh             # Environment variable setup
+│   ├── dev.sh             # Start dev stack
+│   └── teardown.sh        # Stop dev stack
+├── docs/todos/            # TODO tracking
+│   ├── README.md          # TODO index
+│   └── TEMPLATE.md        # Template for new TODOs
+└── .claude/skills/        # Claude TODO management skills
+CLAUDE_SCRIPTS
 
     cat >> CLAUDE.md << 'CLAUDE_COMMANDS'
 ```
@@ -197,8 +209,51 @@ make lint      # Lint all components
 make test      # Test all components
 make build     # Build all components
 make clean     # Clean all artifacts
+make dev       # Start full dev stack
+make teardown  # Stop all dev services
 make help      # Show all targets
 ```
+
+## Development
+
+```bash
+make dev        # Start full dev stack (Docker + backend + frontend)
+make teardown   # Stop all dev services and Docker containers
+```
+
+The dev stack uses deterministic port allocation per git branch, so multiple
+branches can run simultaneously without port conflicts. Ports are stored in
+`~/.dev-ports/port-registry.json`.
+
+Run `make dev` to see the actual ports for your branch.
+
+### Dev Scripts
+
+- `scripts/env.sh` - Sources port allocator, exports environment variables
+- `scripts/dev.sh` - Multi-phase startup (Docker, DB, backend, frontend)
+- `scripts/teardown.sh` - Stops all processes and Docker containers
+- `scripts/port-allocator.py` - Allocates unique port blocks per branch
+
+## TODO Management
+
+TODOs are tracked in `docs/todos/`. Each TODO is a markdown file with structured
+fields (Tier, Severity, Effort, Status, Action Items, Relevant Files).
+
+### Claude Skills
+
+| Command | Description |
+|---------|-------------|
+| `/todo:list` | Show all open TODOs grouped by tier |
+| `/todo:start N` | Create worktree, allocate ports, spawn background agent |
+| `/todo:status` | Dashboard of active worktrees and Docker stacks |
+| `/todo:review N` | Run tests/lint, code review against action items |
+| `/todo:pr N` | Push follow-up changes to existing PR |
+| `/todo:merge N` | Squash-merge PR, mark done, tear down, clean up |
+
+### Creating a TODO
+
+Copy `docs/todos/TEMPLATE.md` to `docs/todos/NN-short-name.md` and fill in
+the fields. Add a row to `docs/todos/README.md`.
 
 CLAUDE_COMMANDS
 
@@ -450,6 +505,273 @@ HOOK_END
 generate_pre_commit
 generate_pre_push
 
+# Generate dev environment scripts
+log "Setting up dev scripts..."
+mkdir -p scripts
+
+# Copy port allocator (always needed for dev scripts)
+cp "$TEMPLATES_DIR/scripts/port-allocator.py" scripts/
+chmod +x scripts/port-allocator.py
+
+# Generate env.sh
+generate_env_sh() {
+    cat > scripts/env.sh << 'ENV_HEADER'
+#!/bin/bash
+# Detect branch and export all port/URL vars.
+# Source this file: source scripts/env.sh
+
+# Resolve script location robustly
+if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "$0" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+fi
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Get current branch name
+BRANCH=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+
+# Use port-allocator to get deterministic ports for this branch
+eval "$(python3 "$SCRIPT_DIR/port-allocator.py" "$BRANCH" --shell)"
+
+ENV_HEADER
+
+    if [[ "$BACKEND_LANG" != "none" ]]; then
+        cat >> scripts/env.sh << 'ENV_BACKEND'
+# Backend env vars
+export PORT="$API_PORT"
+export SERVER_PORT="$API_PORT"
+export DATABASE_HOST="localhost"
+export DATABASE_PORT="$DB_PORT"
+export DATABASE_URL="postgres://${DB_USER:-app}:${DB_PASSWORD:-devpassword}@localhost:${DB_PORT}/${DB_NAME:-app}?sslmode=disable"
+ENV_BACKEND
+    fi
+
+    if [[ "$HAS_FRONTEND" == "yes" && "$BACKEND_LANG" != "none" ]]; then
+        cat >> scripts/env.sh << 'ENV_CORS'
+export CORS_ALLOWED_ORIGINS="http://localhost:${FRONTEND_PORT}"
+ENV_CORS
+    fi
+
+    chmod +x scripts/env.sh
+}
+
+generate_env_sh
+
+# Generate dev.sh
+generate_dev_sh() {
+    cat > scripts/dev.sh << 'DEV_HEADER'
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Check for python3
+command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is required for port allocation"; exit 1; }
+
+source "$SCRIPT_DIR/env.sh"
+
+BRANCH=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+PID_DIR="/tmp/${COMPOSE_PROJECT_NAME}-dev"
+mkdir -p "$PID_DIR"
+
+DEV_HEADER
+
+    # Print URLs based on components
+    cat >> scripts/dev.sh << 'DEV_BANNER'
+echo "=== Dev Stack (${BRANCH}) ==="
+DEV_BANNER
+
+    if [[ "$BACKEND_LANG" != "none" ]]; then
+        cat >> scripts/dev.sh << 'DEV_BANNER_BACKEND'
+echo "  API:      http://localhost:${API_PORT}"
+echo "  DB:       localhost:${DB_PORT}"
+DEV_BANNER_BACKEND
+    fi
+
+    if [[ "$HAS_FRONTEND" == "yes" ]]; then
+        cat >> scripts/dev.sh << 'DEV_BANNER_FRONTEND'
+echo "  Frontend: http://localhost:${FRONTEND_PORT}"
+DEV_BANNER_FRONTEND
+    fi
+
+    echo 'echo ""' >> scripts/dev.sh
+
+    # Phase 1: Docker (if backend)
+    if [[ "$BACKEND_LANG" != "none" ]]; then
+        cat >> scripts/dev.sh << 'DEV_DOCKER'
+
+# --- Phase 1: Docker infrastructure ---
+echo "Starting Docker services..."
+docker compose -f "$PROJECT_ROOT/docker-compose.dev.yml" up -d
+
+echo "Waiting for database..."
+DB_CONTAINER=$(docker compose -f "$PROJECT_ROOT/docker-compose.dev.yml" ps -q db)
+for i in $(seq 1 30); do
+  if docker exec "$DB_CONTAINER" pg_isready -U "${DB_USER:-app}" > /dev/null 2>&1; then
+    echo "Database is ready."
+    break
+  fi
+  if [ "$i" -eq 30 ]; then
+    echo "ERROR: Database did not become ready in 30s"
+    exit 1
+  fi
+  sleep 1
+done
+
+DEV_DOCKER
+
+        # Phase 2: Backend
+        cat >> scripts/dev.sh << 'DEV_BACKEND'
+# --- Phase 2: Backend ---
+if lsof -i ":${API_PORT}" > /dev/null 2>&1; then
+  echo "API already running on port ${API_PORT}."
+else
+  echo "Starting backend on port ${API_PORT}..."
+  cd "$PROJECT_ROOT/backend"
+  PORT="$API_PORT" make run > "$PID_DIR/api.log" 2>&1 &
+  API_PID=$!
+  echo "$API_PID" > "$PID_DIR/api.pid"
+  cd "$PROJECT_ROOT"
+
+  for i in $(seq 1 30); do
+    if curl -sf "http://localhost:${API_PORT}/health" > /dev/null 2>&1; then
+      echo "API is healthy."
+      break
+    fi
+    if [ "$i" -eq 30 ]; then
+      echo "WARNING: API may still be starting (check $PID_DIR/api.log)"
+    fi
+    sleep 1
+  done
+fi
+
+DEV_BACKEND
+    fi
+
+    # Phase 3: Frontend (if selected)
+    if [[ "$HAS_FRONTEND" == "yes" ]]; then
+        cat >> scripts/dev.sh << 'DEV_FRONTEND'
+# --- Frontend ---
+if lsof -i ":${FRONTEND_PORT}" > /dev/null 2>&1; then
+  echo "Frontend already running on port ${FRONTEND_PORT}."
+else
+  echo "Starting frontend on port ${FRONTEND_PORT}..."
+  cd "$PROJECT_ROOT/frontend"
+  npx vite --port "${FRONTEND_PORT}" > "$PID_DIR/frontend.log" 2>&1 &
+  FRONTEND_PID=$!
+  echo "$FRONTEND_PID" > "$PID_DIR/frontend.pid"
+  cd "$PROJECT_ROOT"
+
+  for i in $(seq 1 15); do
+    if curl -sf "http://localhost:${FRONTEND_PORT}" > /dev/null 2>&1; then
+      echo "Frontend is ready."
+      break
+    fi
+    if [ "$i" -eq 15 ]; then
+      echo "WARNING: Frontend may still be starting (check $PID_DIR/frontend.log)"
+    fi
+    sleep 1
+  done
+fi
+
+DEV_FRONTEND
+    fi
+
+    # Ready banner
+    cat >> scripts/dev.sh << 'DEV_READY'
+echo ""
+echo "=== Ready ==="
+DEV_READY
+
+    if [[ "$BACKEND_LANG" != "none" ]]; then
+        cat >> scripts/dev.sh << 'DEV_READY_BACKEND'
+echo "  API:      http://localhost:${API_PORT}"
+echo "  DB:       localhost:${DB_PORT}"
+DEV_READY_BACKEND
+    fi
+
+    if [[ "$HAS_FRONTEND" == "yes" ]]; then
+        cat >> scripts/dev.sh << 'DEV_READY_FRONTEND'
+echo "  Frontend: http://localhost:${FRONTEND_PORT}"
+DEV_READY_FRONTEND
+    fi
+
+    echo 'echo "  Logs:     $PID_DIR/*.log"' >> scripts/dev.sh
+
+    chmod +x scripts/dev.sh
+}
+
+generate_dev_sh
+
+# Generate teardown.sh
+generate_teardown_sh() {
+    cat > scripts/teardown.sh << 'TEARDOWN_HEADER'
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+source "$SCRIPT_DIR/env.sh"
+
+BRANCH=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+PID_DIR="/tmp/${COMPOSE_PROJECT_NAME}-dev"
+
+echo "=== Tearing down dev stack (${BRANCH}) ==="
+
+# Stop native processes
+TEARDOWN_HEADER
+
+    # Kill processes based on components
+    local services=""
+    [[ "$BACKEND_LANG" != "none" ]] && services="$services api"
+    [[ "$HAS_FRONTEND" == "yes" ]] && services="$services frontend"
+
+    cat >> scripts/teardown.sh << TEARDOWN_KILL
+for service in$services; do
+TEARDOWN_KILL
+
+    cat >> scripts/teardown.sh << 'TEARDOWN_KILL_BODY'
+  PID_FILE="$PID_DIR/${service}.pid"
+  if [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE")
+    if kill -0 "$PID" 2>/dev/null; then
+      echo "Stopping ${service} (PID $PID)..."
+      kill "$PID" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
+  fi
+done
+
+TEARDOWN_KILL_BODY
+
+    if [[ "$BACKEND_LANG" != "none" ]]; then
+        cat >> scripts/teardown.sh << 'TEARDOWN_DOCKER'
+# Stop Docker services
+docker compose -f "$PROJECT_ROOT/docker-compose.dev.yml" down
+
+TEARDOWN_DOCKER
+    fi
+
+    cat >> scripts/teardown.sh << 'TEARDOWN_CLEANUP'
+rm -rf "$PID_DIR"
+
+echo "Stack stopped."
+TEARDOWN_CLEANUP
+
+    if [[ "$BACKEND_LANG" != "none" ]]; then
+        cat >> scripts/teardown.sh << 'TEARDOWN_HINT'
+echo "To also remove data: docker compose -f docker-compose.dev.yml down -v"
+TEARDOWN_HINT
+    fi
+
+    chmod +x scripts/teardown.sh
+}
+
+generate_teardown_sh
+
 # Copy ensure-hooks.sh
 cp "$TEMPLATES_DIR/core/.githooks/ensure-hooks.sh" .githooks/
 chmod +x .githooks/ensure-hooks.sh
@@ -517,13 +839,31 @@ if [[ "$BACKEND_LANG" != "none" ]]; then
     fi
 fi
 
+# Copy dev docker-compose (if backend — it runs the database)
+if [[ "$BACKEND_LANG" != "none" ]]; then
+    log "Setting up dev docker-compose..."
+    cp "$TEMPLATES_DIR/docker-compose.dev.yml.tmpl" docker-compose.dev.yml
+    substitute docker-compose.dev.yml
+fi
+
+# Copy Claude skills (TODO management)
+log "Setting up Claude TODO skills..."
+mkdir -p .claude/skills
+cp -r "$TEMPLATES_DIR/claude/skills/"* .claude/skills/
+
+# Copy TODO docs structure
+log "Setting up TODO tracking..."
+mkdir -p docs/todos
+cp "$TEMPLATES_DIR/docs/todos/README.md" docs/todos/
+cp "$TEMPLATES_DIR/docs/todos/TEMPLATE.md" docs/todos/
+
 # Generate root Makefile
 log "Generating root Makefile..."
 generate_makefile() {
     cat > Makefile << 'MAKEFILE_HEADER'
 # Root Makefile - Coordinates all subdirectory builds
 
-.PHONY: lint test build clean help install deploy dev
+.PHONY: lint test build clean help install deploy dev teardown
 
 .DEFAULT_GOAL := help
 
@@ -652,21 +992,16 @@ endif
 DEPLOY_TARGET
     fi
 
-    # Dev target
+    # Dev targets
     echo "# ==============================================================================" >> Makefile
     echo "# Development" >> Makefile
     echo "# ==============================================================================" >> Makefile
     echo "" >> Makefile
-    echo "dev:" >> Makefile
-    echo '	@echo "Starting development servers..."' >> Makefile
-    echo '	@echo ""' >> Makefile
-    echo '	@echo "Run these in separate terminals:"' >> Makefile
-    if [[ "$BACKEND_LANG" != "none" ]]; then
-        echo '	@echo "  make -C backend run      # Start backend server"' >> Makefile
-    fi
-    if [[ "$HAS_FRONTEND" == "yes" ]]; then
-        echo '	@echo "  make -C frontend dev     # Start frontend dev server"' >> Makefile
-    fi
+    echo "dev: ## Start full dev stack" >> Makefile
+    echo '	@./scripts/dev.sh' >> Makefile
+    echo "" >> Makefile
+    echo "teardown: ## Stop all dev services" >> Makefile
+    echo '	@./scripts/teardown.sh' >> Makefile
     echo "" >> Makefile
 
     # Help target
@@ -688,7 +1023,8 @@ help:
 	@echo "  install   - Install all dependencies"
 	@echo ""
 	@echo "Development:"
-	@echo "  dev       - Show how to start dev environment"
+	@echo "  dev       - Start full dev stack (Docker + backend + frontend)"
+	@echo "  teardown  - Stop all dev services"
 HELP_TARGET
 
     if [[ "$BACKEND_LANG" != "none" ]]; then
@@ -725,6 +1061,11 @@ if [[ "$HAS_FRONTEND" == "yes" ]]; then
     echo "  cd frontend && npm create vite@latest . -- --template react-ts"
 fi
 echo "  make build    # Verify everything works"
+echo "  make dev      # Start dev environment"
+echo ""
+echo "TODO management:"
+echo "  /todo:list    # Show open TODOs"
+echo "  /todo:start N # Start work on a TODO"
 echo ""
 if [[ -n "$GITHUB_ORG" ]]; then
     echo "To create a GitHub repo:"
